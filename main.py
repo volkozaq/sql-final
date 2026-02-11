@@ -31,15 +31,17 @@ state_storage = StateMemoryStorage()
 token_bot = os.getenv('MY_TOKEN')
 bot = TeleBot(token_bot, state_storage=state_storage)
 
-known_users = []
-qu = session.query(UserInfo.telegram_id).all()
-if len(qu) > 0:
-    for r in qu:
-        known_users.append(r[0])
+# known_users = []
+# qu = session.query(UserInfo.telegram_id).all()
+# if len(qu) > 0:
+#     for r in qu:
+#         known_users.append(r[0])
+# print(known_users)
 userStep = {}
 qu = session.query(UserInfo.chat_id, UserInfo.user_step).all()
 for row in qu:
     userStep[row[0]] = row[1]
+print(userStep)
 buttons = []
 
 
@@ -73,44 +75,35 @@ def insert_base_data(message):
     session.add_all([u1, w1, w2, w3, w4, w5, w6, w7, w8, w9, w10, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, ui1])
     session.commit()
 
-    qu = session.query(UserInfo.chat_id, UserInfo.user_step).all()
-    for row in qu:
-        userStep[row[0]] = row[1]
+    qu = session.query(UserInfo.chat_id, UserInfo.user_step).filter(UserInfo.chat_id==message.chat.id)
+    userStep[qu[0]] = qu[1]
 
 
 @bot.message_handler(commands=['start'])
 def user_init(message):
     q = session.query(Users.login).all()
-    if len(known_users) > 0:
-        if message.from_user.id not in known_users:
+    if len(userStep) > 0:
+        if message.from_user.id not in userStep:
             insert_base_data(message)
             get_user_step(message.from_user.id)
-            start_state(message)
-        else:
-            hint = show_hint("Привет 👋",
-                             " Давай попрактикуемся в английском языке.",
-                             "Тренировки можешь проходить в удобном для себя темпе.",
-                             "У тебя есть возможность использовать тренажёр, как конструктор, и собирать свою собственную базу для обучения.",
-                             "Для этого воспрользуйся инструментами:",
-                             "добавить слово ➕, удалить слово 🔙.",
-                             "Ну что, начнём ⬇️")
-            bot.send_message(message.chat.id, hint)
-            bot.set_state(message.from_user.id, MyStates.start, message.chat.id)
-            userStep[message.from_user.id] = 'translate'
-            create_cards(message)
-            random_word_info = session.query(Users.login, Words.word, Words.id).join(Words).filter(
-                Users.login == message.from_user.username).order_by(func.random()).first()
-            target_word = random_word_info[1]
-            translate = session.query(Words.word, Translations.trans).join(Translations).filter(
-                Words.id == random_word_info[2])
-            translate = translate[0][1]
-            others_info = session.query(Users.login, Words.word, Words.id).join(Words).filter(and_(
-                Users.login == message.from_user.username, Words.id != random_word_info[2])).order_by(
-                func.random()).limit(4)
-            others = []
-            for row in others_info:
-                others.append(row[1])
-            get_user_step(message.from_user.id)
+
+        start_state(message)
+        bot.set_state(message.from_user.id, MyStates.start, message.chat.id)
+        userStep[message.from_user.id] = 'translate'
+        # create_cards(message)
+        random_word_info = session.query(Users.login, Words.word, Words.id).join(Words).filter(
+            Users.login == message.from_user.username).order_by(func.random()).first()
+        target_word = random_word_info[1]
+        translate = session.query(Words.word, Translations.trans).join(Translations).filter(
+            Words.id == random_word_info[2])
+        translate = translate[0][1]
+        others_info = session.query(Users.login, Words.word, Words.id).join(Words).filter(and_(
+            Users.login == message.from_user.username, Words.id != random_word_info[2])).order_by(
+            func.random()).limit(4)
+        others = []
+        for row in others_info:
+            others.append(row[1])
+        get_user_step(message.from_user.id)
     else:
         start_state(message)
         insert_base_data(message)
@@ -149,17 +142,17 @@ def get_user_step(uid):
         print('Old user')
         return userStep[uid]
     else:
-        known_users.append(uid)
+        # known_users.append(uid)
         userStep[uid] = 'start'
         print("New user detected, who hasn't used \"/start\" yet")
         return 0
 
 
-@bot.message_handler(commands=['cards', 'start'])
+@bot.message_handler(state=MyStates.translation)
 def create_cards(message):
     cid = message.chat.id
-    if cid not in known_users:
-        known_users.append(cid)
+    if cid not in userStep:
+        # known_users.append(cid)
         userStep[cid] = 'start'
         start_state(message)
         bot.set_state(message.from_user.id, MyStates.start, message.chat.id)
@@ -230,7 +223,7 @@ def start_state(message):
                                       "У тебя есть возможность использовать тренажёр, как конструктор, "
                                       "и собирать свою собственную базу для обучения. Для этого воспрользуйся инструментами:"
                                       "добавить слово ➕,удалить слово 🔙.Ну что, начнём ⬇️")
-    next_cards(message)
+    # next_cards(message)
 
 
 @bot.message_handler(state=MyStates.new_word)
@@ -298,15 +291,16 @@ def message_reply(message):
     if user_state == 'translate':
         text = message.text
         markup = types.ReplyKeyboardMarkup(row_width=2)
+        hint = ''
         with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
             target_word = data['target_word']
             if text == target_word:
                 hint = show_target(data)
                 hint_text = ["Отлично!❤", hint]
-                next_btn = types.KeyboardButton(Command.NEXT)
-                add_word_btn = types.KeyboardButton(Command.ADD_WORD)
-                delete_word_btn = types.KeyboardButton(Command.DELETE_WORD)
-                buttons.extend([next_btn, add_word_btn, delete_word_btn])
+                # next_btn = types.KeyboardButton(Command.NEXT)
+                # add_word_btn = types.KeyboardButton(Command.ADD_WORD)
+                # delete_word_btn = types.KeyboardButton(Command.DELETE_WORD)
+                # buttons.extend([next_btn, add_word_btn, delete_word_btn])
                 hint = show_hint(*hint_text)
             else:
                 for btn in buttons:
